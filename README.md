@@ -1,20 +1,12 @@
 # Introduction 
-TODO: Give a short introduction of your project. Let this section explain the objectives or the motivation behind this project. 
+This is a tool for simple network configuration (wifi/cable) on linux systems with the use of connman
 
 # Getting Started
-TODO: Guide users through getting your code up and running on their own system. In this section you can talk about:
-1.	Installation process
-2.	Software dependencies
-3.	Latest releases
-4.	API references
-
-# Build and Test
-TODO: Describe and show how to build your code and run the tests. 
-
-# Contribute
-TODO: Explain how other users and developers can contribute to make your code better. 
-
-If you want to learn more about creating good readme files then refer the following [guidelines](https://www.visualstudio.com/en-us/docs/git/create-a-readme). You can also seek inspiration from the below readme files:
-- [ASP.NET Core](https://github.com/aspnet/Home)
-- [Visual Studio Code](https://github.com/Microsoft/vscode)
-- [Chakra Core](https://github.com/Microsoft/ChakraCore)
+1. Installation requirements and process
+    - Following dependencies need to be fullfilled to use network_configurator:
+        - connman (Linux network manager) installed
+        - pyconnman (Python package)
+        - python 2.7
+2. Starting network-configurator
+    - place the 'network-configurator' file into the folder you wish to
+    - start 'network-configurator' with './network-configurator'
