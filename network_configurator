@@ -1,5 +1,13 @@
 #! /usr/bin/env python
 
+
+'''
+(c) Copyright 2018
+Widmann Roland, bbv Software Services AG, roland.widmann@bbv.ch
+
+SPDX-License-Identifier: GPL-2.0+
+'''
+
 import os, sys
 import errno
 import pyconnman as con
@@ -68,7 +76,7 @@ class Parameters(object):
 
     @ip.setter
     def ip(self, ip):
-        self.__ip = ip if validate_ip(ip) and not ip == ''else self.__ip
+        self.__ip = ip if validate_ip(ip) else self.__ip
 
     @property
     def netmask(self):
@@ -76,7 +84,7 @@ class Parameters(object):
 
     @netmask.setter
     def netmask(self, netmask):
-        self.__netmask = netmask if validate_ip(netmask) and not netmask == '' else self.__netmask
+        self.__netmask = netmask if validate_ip(netmask) else self.__netmask
 
     @property
     def gateway(self):
@@ -84,7 +92,7 @@ class Parameters(object):
 
     @gateway.setter
     def gateway(self, gateway):
-        self.__gateway = gateway if validate_ip(gateway) and not gateway == '' else self.__gateway
+        self.__gateway = gateway if validate_ip(gateway) else self.__gateway
 
     @property
     def dns(self):
@@ -92,7 +100,7 @@ class Parameters(object):
 
     @dns.setter
     def dns(self, dns):
-        self.__dns = dns if validate_ip(dns) and not dns == '' else self.__dns
+        self.__dns = dns if validate_ip(dns) else self.__dns
 
     @property
     def passphrase(self):
@@ -108,6 +116,7 @@ class MenuManager:
     def __init__(self, manager):
         self.menu_exit_char = 'q'
         self.menu_switch_wifi_state = 'w'
+        self.menu_refresh_wifi = 'r'
         self.menu_connect = 'c'
         self.specialchars = [self.menu_exit_char]
         self.manager = manager
@@ -115,6 +124,7 @@ class MenuManager:
         self.current_max_index = sys.maxint
         self.wifi_states = {0: 'OFF', 1: 'ON'}
         self.current_method = ''
+        self.displayed_wifi_state = ''
         self.property_index = {'METHOD': '0',
                             'IP': '1',
                             'NETMASK': '2',
@@ -154,20 +164,22 @@ class MenuManager:
         return input
 
     def show_choose_device_menu(self, services):
-        self.specialchars = [self.menu_exit_char, self.menu_switch_wifi_state]
+        self.specialchars = [self.menu_exit_char, self.menu_switch_wifi_state, self.menu_refresh_wifi]
         wifi_tech = con.technology.ConnTechnology('/net/connman/technology/wifi')
         lines = "=============================="
         self.current_method = ''
+        self.displayed_wifi_state = wifi_tech.Powered
+
         os.system('clear')
-        print "Devices available | Wifi: ", self.wifi_states[wifi_tech.Powered], \
-            "\n", lines
+        print "Devices available | Wifi: ", self.wifi_states[self.displayed_wifi_state], "\n", lines
 
         for (i, (path, params)) in enumerate(services):
             tech = con.service.ConnService(path)
-            print i, ') ', (tech.Type + " - " + tech.Name).encode('utf-8')  # utf-8 encoding because of umlauts in ssid
+            print i, ') ', (tech.Type + " - " + tech.Name).encode('utf-8')
 
         print lines
-        print self.menu_switch_wifi_state, ') Turn wifi ->', 'OFF' if wifi_tech.Powered == 1 else 'ON'
+        print self.menu_switch_wifi_state, ') Turn wifi ->', 'OFF' if self.displayed_wifi_state == 1 else 'ON'
+        print self.menu_refresh_wifi, ') Refresh wifi'
         print self.menu_exit_char, ') Exit'
         self.current_max_index = len(services) - 1
 
@@ -175,10 +187,11 @@ class MenuManager:
         self.specialchars = [self.menu_exit_char, self.menu_connect]
         headline = "Current device configuration for " + device.path
         self.show_trunk_cfg_menu(device, headline)
+
         if device.Type == 'ethernet':
-            self.show_ethernet_menu(len(headline))
+            self.show_ethernet_menu(headline)
         else:
-            self.show_wifi_menu(device, len(headline))
+            self.show_wifi_menu(device,headline)
 
         print "(", self.menu_exit_char, ") Back to Devices"
 
@@ -189,7 +202,7 @@ class MenuManager:
         os.system('clear')
         print line
         print headline
-        print "State: " + device_.get_current_state()
+        print "SSID: " + device_.Name + " State: " + device_.get_current_state()
         print line
         print "(0) Method:\t\t" + device_.current.method + "\t\t" + device_.new.method
         print "(1) IPv4:\t\t" + device_.current.ip + "\t\t" + device_.new.ip
@@ -197,15 +210,15 @@ class MenuManager:
         print "(3) Gateway:\t\t" + device_.current.gateway + "\t\t" + device_.new.gateway
         print "(4) DNS:\t\t" + device_.current.dns + "\t\t\t" + device_.new.dns
 
-    def show_ethernet_menu(self, len_line):
+    def show_ethernet_menu(self, headline):
         self.current_max_index = 4
-        print len_line * '='
+        print len(headline) * '='
         print "(", self.menu_connect, ") Change configuration"
 
-    def show_wifi_menu(self, device_, len_line):
+    def show_wifi_menu(self, device_, headline):
         self.current_max_index = 5
         print "(5) Enter Password \t" + device_.current.passphrase.rstrip() + "\t" + device_.new.passphrase.rstrip()
-        print len_line * '='
+        print len(headline) * '='
         print "(", self.menu_connect, ") Connect/Disconnect"
 
 
@@ -217,7 +230,7 @@ class Device:
 
         (self.path, self.params) = self.services
         self.device_name = self.path.split('/')[4]
-        self.tech = con.service.ConnService(self.path) #dbus.exceptions.DBusException
+        self.tech = con.service.ConnService(self.path)
         self.Type = self.tech.Type
         self.Name = self.tech.Name
         self.connman_path = '/var/lib/connman/' + self.device_name + '/'
@@ -234,50 +247,12 @@ class Device:
                                   netmask=self.get_current_netmask(), gateway=self.get_system_gateway(),
                                   dns=self.get_current_dns(), passphrase=self.get_current_passphrase())
 
-    def do_agent(self):
-        params = {#'name': None,
-              'ssid': 'GUESTWLAN',
-              'passphrase': 'vConn*4cAA'
-              }
-
-        if self.Type != "ethernet":
-            try:
-                self.wifi_agent = con.agent.SimpleWifiAgent('/text/agent')
-                self.wifi_agent.set_service_params('*',
-                                     #params['name'],
-                                     params['ssid'],
-                                     #params['identity'],
-                                     #params['username'],
-                                     #params['password'],
-                                     params['passphrase'],
-                                     #params['wpspin']
-                                     )
-                print "----",self.services
-                print "----", self.path
-                #self.services[self.path] = self.wifi_agent
-                self.manager.register_agent('/text/agent')
-            except dbus.exceptions.DBusException:
-                print 'Unable to complete:', sys.exc_info()
-
-            try:
-                #self.tech.connect()
-                print "generate service for ", self.path
-                srv = con.ConnService(self.path)
-                print "connecting srv..."
-                srv.connect()
-            except Exception, e:
-                print "error connecting", str(e)
-                self.manager.unregister_agent('/text/agent')
-                print "unregister from manager"
-
-            raw_input("...")
-
     def refresh(self):
         try:
             self.tech = con.service.ConnService(self.path)
             self.current = self.refresh_current_configuration()
         except dbus.exceptions.DBusException:
-            print "Wifi no more reachable!" #crash?
+            print "Wifi no more reachable!"
             return False
 
         return True
@@ -287,11 +262,14 @@ class Device:
 
     def get_current_method(self):
         try:
-            '''hier taucht noch crash auf wenn device nicht mehr da'''
             curr_method = self.tech.get_property('IPv4')['Method']
-        except KeyError as e:
-            curr_method = ""
-        return curr_method
+            return curr_method
+        except KeyError:
+            pass
+        except dbus.exceptions.DBusException:
+            print "wifi device no more available"
+
+        return ''
 
     def set_new_method(self, new_method):
         if new_method == '0':
@@ -304,10 +282,13 @@ class Device:
     def get_current_ip(self):
         try:
             curr_ip = self.tech.get_property('IPv4')['Address']
+            return curr_ip
         except KeyError:
-            curr_ip = ""
+            pass
+        except dbus.exceptions.DBusException:
+            print "wifi device no more available"
 
-        return curr_ip
+        return ''
 
     def set_new_ip(self, new_ip):
         self.new.ip = new_ip
@@ -315,16 +296,26 @@ class Device:
     def get_current_netmask(self):
         try:
             curr_netmask = self.tech.get_property('IPv4')['Netmask']
+            return curr_netmask
         except KeyError:
-            curr_netmask = ""
+            pass
+        except dbus.exceptions.DBusException:
+            print "wifi device no more available"
 
-        return curr_netmask
+        return ''
 
     def set_new_netmask(self, new_netmask):
         self.new.netmask = new_netmask
 
     def get_current_dns(self):
-        name_server_list = self.tech.get_property('Nameservers')
+        name_server_list = []
+        try:
+            name_server_list = self.tech.get_property('Nameservers')
+        except KeyError:
+            pass
+        except dbus.exceptions.DBusException:
+            print "wifi device no more available"
+
         if len(name_server_list) > 1:
             return name_server_list[0]
         else:
@@ -341,7 +332,7 @@ class Device:
                     if line.startswith('Passphrase'):
                         return line.split('=')[1]
 
-            except OSError as e:
+            except OSError:
                 pass
         return ''
 
@@ -368,7 +359,7 @@ class Device:
     def get_netmask_bitlen(self, netmask):
         return sum([bin(int(x)).count('1') for x in netmask.split('.')])
 
-    def create_connman_config_file(self, autoconnect='true'):
+    def create_connman_config_string(self, autoconnect='true'):
         settings_str = '[' + self.device_name + ']' + '\n' +\
                 'Name=' + self.Name + '\n' +\
                 'SSID=' + self.Name.encode('hex') + '\n' +\
@@ -387,8 +378,10 @@ class Device:
                             'IPv4.gateway=' + self.new.gateway + '\n' +\
                             'Nameservers=' + self.new.dns + '\n'
 
-        print "new_settings_string: ", settings_str
+        return settings_str
 
+    def write_config_file(self, settings_str):
+        print "new_settings_string: ", settings_str
         print 'creating connman device setting file for: ', self.device_name
         try:
             file = open(self.connman_cfg_file, "w")
@@ -417,12 +410,12 @@ class Device:
 
         print "Applying IPv4 configuration..."
         strg_ip = "connmanctl config " + self.device_name + " --ipv4 " + self.new.method + " " + self.new.ip + " " + self.new.netmask + " " + self.new.gateway
-        result = os.popen(strg_ip)
+        os.popen(strg_ip)
 
         if not self.new.dns == "":
             print "Applying DNS configuration...",self.new.dns
             strg_dns = "connmanctl config " + self.device_name + " --nameservers " + self.new.dns
-            result = os.popen(strg_dns)
+            os.popen(strg_dns)
 
     def connect_wifi(self):
         try:
@@ -437,7 +430,8 @@ class Device:
                 print "disconnecting srv..."
                 wifi_service.disconnect()
                 self.new.passphrase = self.current.passphrase
-                self.create_connman_config_file('false')
+                settings_str = self.create_connman_config_string('false')
+                self.write_config_file(settings_str)
             except Exception as e:
                 print "Error disconnecting: ", self.path, "\n", e
                 raw_input('continue...')
@@ -450,7 +444,8 @@ class Device:
                     print "Error creating directory: ", self.connman_path, " - ", str(e)
                     return False
 
-            if not self.create_connman_config_file():
+            settings_str = self.create_connman_config_string()
+            if not self.write_config_file(settings_str):
                 return False
 
             try:
@@ -462,16 +457,16 @@ class Device:
                 print "creating agent..."
                 self.wifi_agent = con.agent.SimpleWifiAgent('/test/agent')
                 print "registering agent..."
-                self.manager.register_agent('/test/agent')
             except KeyError as e:
                 print str(e)
             except dbus.exceptions.DBusException:
                 print 'Unable to complete:', sys.exc_info()
-
             try:
+                print "Registering manager in agent"
+                self.manager.register_agent('/test/agent')
                 print "generate service for ", self.path
                 wifi_service = con.ConnService(self.path)
-                print "connecting srv..."
+                print "connecting to wifi..."
                 wifi_service.connect()
             except Exception, e:
                 print "error connecting", str(e)
@@ -494,7 +489,7 @@ class DeviceConfigurator:
 
     def switch_wifi_state(self):
         wifi_tech = con.technology.ConnTechnology('/net/connman/technology/wifi')
-        if wifi_tech.Powered == 0:
+        if self.menu_manager.displayed_wifi_state == 0:
             os.system('connmanctl enable wifi')
             sleep(1)
             wifi_tech.scan()
@@ -502,18 +497,29 @@ class DeviceConfigurator:
             print "Disabling wifi..."
             os.system('connmanctl disable wifi')
 
-    def start(self):
+    def refresh_wifi(self):
+        wifi_tech = con.technology.ConnTechnology('/net/connman/technology/wifi')
+        if wifi_tech.Powered == 1:
+            wifi_tech.scan()
+        else:
+            print "wifi is disabled"
+
+    def select_device(self):
         self.refresh_services()
         self.menu_manager.show_choose_device_menu(self.services)
         input = self.menu_manager.read_valid_index('Choose device to configure: ')
         while input != self.menu_manager.menu_exit_char:
             if input == self.menu_manager.menu_switch_wifi_state:
                 self.switch_wifi_state()
+            elif input == self.menu_manager.menu_refresh_wifi:
+                self.refresh_wifi()
             else:
                 try:
                     con.service.ConnService(self.services[int(input)][0])
                     chosen_device = Device(self.manager, self.services[int(input)])
                     self.configure_device(chosen_device)
+                except KeyError as e:
+                    print "Error instancing device. ", e
                 except dbus.exceptions.DBusException as e:
                     print "Error instancing device: ", self.services[int(input)][0]
                     print e
@@ -560,7 +566,7 @@ class DeviceConfigurator:
                                         con.ConnManager.SIGNAL_TECHNOLOGY_ADDED,
                                         None)
             manager.add_signal_receiver(self.dump_signal,
-                                        con.ConnManager.SIGNAL_TECHNOLOGY_REMOVED,  # noqa
+                                        con.ConnManager.SIGNAL_TECHNOLOGY_REMOVED,
                                         None)
             manager.add_signal_receiver(self.dump_signal,
                                         con.ConnManager.SIGNAL_SERVICES_CHANGED,
@@ -582,4 +588,4 @@ class DeviceConfigurator:
 
 if __name__ == '__main__':
     configurator = DeviceConfigurator()
-    configurator.start()
+    configurator.select_device()
