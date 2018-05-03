@@ -682,7 +682,6 @@ class DeviceConfigurator:
                 print_d(True, 'New Round in select Device')
                 self.execute_order(input)
                 self.refresh_services()
-                raw_input('New device round...')
                 input = self.menu_manager.show_choose_device_menu(self.services)
             return True
         except Exception as e:
