@@ -14,8 +14,20 @@ import pyconnman as con
 import dbus
 import dbus.mainloop.glib
 import signal
-from time import sleep
+from time import sleep, time
 
+
+CONNMAN_REINIT = 'CONNMAN_REINIT'
+DEBUG = False
+
+def print_d(hit_key, *text):
+    text_to_print = ""
+    if DEBUG:
+        for te in text:
+            text_to_print += ' ' + str(te)
+        print text_to_print
+        if hit_key:
+            raw_input('continue...')
 
 def validate_ip(s):
     if s is None:
@@ -176,7 +188,10 @@ class MenuManager:
 
         for (i, (path, params)) in enumerate(services):
             tech = con.service.ConnService(path)
-            print i, ') ', (tech.Type + " - " + tech.Name).encode('utf-8')
+            wifi_name = "" if tech.Name is None else tech.Name
+            wifi_type = "" if tech.Type is None else tech.Type
+            wifi_strength = "-" if wifi_type == 'ethernet' or tech.Strength is None else str(int(tech.Strength)) + '%'
+            print i, ') ', (wifi_type + " - " + wifi_name).encode('utf-8'), ' (', wifi_strength, ')'
 
         print lines
         print self.menu_switch_wifi_state, ') Turn wifi ->', self.wifi_states_rev[self.displayed_wifi_state]
@@ -199,7 +214,7 @@ class MenuManager:
         if device.Type == 'ethernet':
             self.show_ethernet_menu(headline)
         else:
-            self.show_wifi_menu(device,headline)
+            self.show_wifi_menu(device, headline)
 
         print "(", self.menu_exit_char, ") Back to Devices"
 
@@ -239,6 +254,7 @@ class MenuManager:
             return ('QUIT',)
 
     def show_trunk_cfg_menu(self, device_, headline):
+        device_.refresh_current_configuration()
         self.current_method = device_.new.method
         line = len(headline) * '='
 
@@ -270,7 +286,8 @@ class Device:
     def __init__(self, manager, services):
         self.manager = manager
         self.services = services
-
+        self.retry_count = 0
+        self.agent_index = 0
         (self.path, self.params) = self.services
         self.device_name = self.path.split('/')[4]
         self.tech = con.service.ConnService(self.path)
@@ -423,16 +440,23 @@ class Device:
 
         return settings_str
 
+    def delete_device_config(self):
+        if os.path.exists(self.connman_path):
+            for file in os.listdir(self.connman_path):
+                file_path = os.path.join(self.connman_path, file)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            os.rmdir(self.connman_path)
+
     def write_config_file(self, settings_str):
-        print "new_settings_string: ", settings_str
-        print 'creating connman device setting file for: ', self.device_name
+        print_d(False, 'creating connman device setting file for: ', self.device_name)
+        print_d(False, settings_str)
         try:
             file = open(self.connman_cfg_file, "w")
             file.write(settings_str)
             file.close()
         except OSError as e:
-            print "Error creating settings file: ", self.connman_cfg_file, " - ", str(e)
-            raw_input('continue...')
+            print_d(True, "Error creating settings file: ", self.connman_cfg_file, " - ", str(e))
             return False
 
         try:
@@ -445,9 +469,9 @@ class Device:
 
     def apply_changes(self):
         if self.Type == 'ethernet':
-            self.configure_ethernet()
+            return self.configure_ethernet()
         else:
-            self.connect_wifi()
+            return self.connect_wifi()
 
     def configure_ethernet(self):
 
@@ -456,13 +480,31 @@ class Device:
         os.popen(strg_ip)
 
         if not self.new.dns == "":
-            print "Applying DNS configuration...",self.new.dns
+            print "Applying DNS configuration...", iniself.new.dns
             strg_dns = "connmanctl config " + self.device_name + " --nameservers " + self.new.dns
             os.popen(strg_dns)
 
+    def restart_connman(self):
+        print_d(False, "restarting connman")
+        os.popen('systemctl restart connman.service')
+        status = -1
+        while status != 0:
+            status = os.system('systemctl status connman.service> /dev/null')
+            for i in range(4):
+                print ".",
+                sleep(1)
+
+        print_d(False, 'Restarted...!')
+
+        return True
+
     def connect_wifi(self):
+        if self.new.passphrase != self.current.passphrase:
+            self.retry_count = 0
+
+        agent_string = '/config/agent' + str(self.agent_index)
         try:
-            self.manager.unregister_agent('/test/agent')
+            self.manager.unregister_agent(agent_string)
         except dbus.exceptions.DBusException:
             pass
 
@@ -476,40 +518,56 @@ class Device:
                 self.write_config_file(settings_str)
             except Exception as e:
                 print "Error disconnecting: ", self.path, "\n", e
-                raw_input('continue...')
+                if self.retry_count < 4:
+                    self.restart_connman()
+                    return CONNMAN_REINIT
         else:
             if not os.path.exists(self.connman_path):
                 try:
                     os.mkdir(self.connman_path)
                 except OSError as e:
-                    print "Error creating directory: ", self.connman_path, " - ", str(e)
+                    print_d(True, "Error creating directory: ", self.connman_path, " - ", str(e))
                     return False
 
             settings_str = self.create_connman_config_string()
             if not self.write_config_file(settings_str):
+                raw_input('cont error write_config_file')
                 return False
 
             try:
-                self.manager.unregister_agent('/test/agent')
+                self.manager.unregister_agent(agent_string)
+
             except dbus.exceptions.DBusException:
                 pass
 
             try:
-                con.agent.SimpleWifiAgent('/test/agent')
+                con.agent.SimpleWifiAgent(agent_string)
             except KeyError as e:
                 print str(e)
             except dbus.exceptions.DBusException:
                 print 'Unable to complete:', sys.exc_info()
 
             try:
-                self.manager.register_agent('/test/agent')
+                self.manager.register_agent(agent_string)
                 wifi_service = con.ConnService(self.path)
                 print "connecting to wifi..."
-                wifi_service.connect()
+                print_d(False, "retrycount: ", self.retry_count)
+
+                if self.new.passphrase == self.current.passphrase:
+                    print_d(False, 'in simple wifi_service.connect()')
+                    wifi_service.connect()
+                    self.refresh_current_configuration()
+                else:
+                    print_d(False, 'in different passphrases')
+                    if self.retry_count < 1:
+                        print_d(False, 'doing restart...')
+                        self.restart_connman()
+                        sleep(4)
+                        return CONNMAN_REINIT
+
             except Exception, e:
-                print "error connecting", str(e)
-                raw_input('continue...')
-                self.manager.unregister_agent('/test/agent')
+                self.manager.unregister_agent(agent_string)
+                print_d(True, 'error connecting ', str(e))
 
         return True
 
@@ -517,57 +575,138 @@ class Device:
 class DeviceConfigurator:
 
     def __init__(self):
+        self.manager = None
+        self.services = None
+        self.wifi_tech = None
+        self.menu_manager = None
+
+        self.do_initialisation()
+
+    def run(self):
+        while not self.select_device():
+                print_d(True, 'New Device Select round')
+                self.do_initialisation()
+
+    def do_initialisation(self):
+        print "INITIALISING DEVICE CONFIGURATOR"
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
         self.manager = self.init_manager()
-        self.services = self.manager.get_services()
+        self.refresh_services()
         self.wifi_tech = con.technology.ConnTechnology('/net/connman/technology/wifi')
         self.menu_manager = MenuManager(self.manager, self.wifi_tech)
 
     def refresh_services(self):
-        self.services = self.manager.get_services()
+        try:
+            self.services = self.manager.get_services()
+        except dbus.exceptions.DBusException as e:
+            print "Services temporarily unavailable... ", e
+            return False
+
+    def scan_wifi(self):
+        try:
+            self.wifi_tech.scan()
+        except dbus.exceptions.DBusException as e:
+            print "wifi scan not possible. ", e
 
     def switch_wifi_state(self, state):
         if state == '1':
             os.system('connmanctl enable wifi')
             sleep(1)
-            self.wifi_tech.scan()
+            self.scan_wifi()
         else:
             print "Disabling wifi..."
             os.system('connmanctl disable wifi')
 
     def refresh_wifi(self):
-        if self.wifi_tech.Powered == 1:
-            self.wifi_tech.scan()
+        try:
+            if self.wifi_tech.Powered == 1:
+                self.scan_wifi()
+            else:
+                print "wifi is disabled"
+        except dbus.exceptions.DBusException as e:
+            print "Error reading Wifi state. ", e
+
+    def get_device_index_by_path(self, path):
+        index = -1
+        for service in self.services:
+            index += 1
+            if path in service:
+                return index
+
+    def retry_connect(self, old_device):
+        print_d(True, 'in retry_connect')
+        device_list_index = self.get_device_index_by_path(old_device.path)
+        if device_list_index < 0:
+            print_d(True, 'empty device list')
+            return
+
+        con.service.ConnService(self.services[device_list_index][0])
+        chosen_device = Device(self.manager, self.services[device_list_index])
+        chosen_device.retry_count = old_device.retry_count + 1
+        if chosen_device.get_current_state() != 'ready' and chosen_device.get_current_state() != 'online':
+            print_d(True, 'new_device not ready or online - init connect')
+            self.execute_order(('DEVICE_APPLY_CONFIG',), chosen_device)
+            sleep(1)
         else:
-            print "wifi is disabled"
+            print_d(True, 'device already online')
+
+        return chosen_device
 
     def create_and_configure_device(self, index_of_service):
         try:
             con.service.ConnService(self.services[int(index_of_service)][0])
             chosen_device = Device(self.manager, self.services[int(index_of_service)])
-            self.configure_device(chosen_device)
+            print_d(True, 'waiting for configure_device to return ')
+            if not self.configure_device(chosen_device):
+                print_d(True, 'Connection seemed to have failed in first place - retrying')
+                result = self.retry_connect(chosen_device)
+                if result is None:
+                    print_d(True, 'Device not available..')
+                    return
+                sleep(2)
+                print_d(True, 'entering configure device')
+                self.configure_device(result)
+            else:
+                print_d(True, 'q in device config')
+
         except KeyError as e:
-            print "Error instancing device. ", e
+            print_d(True, 'Error instancing device', e)
         except dbus.exceptions.DBusException as e:
-            print "Error instancing device: ", self.services[int(input)][0]
-            print e
+            print_d(True, 'Error instancing device: ', self.services[int(index_of_service)][0], e)
 
     def select_device(self):
-        self.refresh_services()
-        input = self.menu_manager.show_choose_device_menu(self.services)
-        while 'QUIT' not in input:
-            self.execute_order(input)
+        try:
             self.refresh_services()
             input = self.menu_manager.show_choose_device_menu(self.services)
+            while 'QUIT' not in input:
+                print_d(True, 'New Round in select Device')
+                self.execute_order(input)
+                self.refresh_services()
+                raw_input('New device round...')
+                input = self.menu_manager.show_choose_device_menu(self.services)
+            return True
+        except Exception as e:
+            print_d(True, 'Unable to establish hardware communication - reinitialising...', e)
+            return False
 
     def configure_device(self, device):
         input = self.menu_manager.show_device_menu(device)
         while 'QUIT' not in input:
-            self.execute_order(input, device)
+            result = self.execute_order(input, device)
+            print_d(True, 'RETURN OF ', input, ' IS ', result)
+            if result is not None and result == CONNMAN_REINIT:
+                self.do_initialisation()
+                print_d(True, 'done initialisation')
+                return False
+
             if not device.refresh():
-                return
+                print_d(True, 'device.refresh')
+                return False
             sleep(1)
+            print_d(True, 'recalling show_divice_menu ')
             input = self.menu_manager.show_device_menu(device)
+
+        return True
 
     def execute_order(self, order, device=None):
         if device is not None:
@@ -586,7 +725,8 @@ class DeviceConfigurator:
                 'WIFI_SET': self.switch_wifi_state,
                 'WIFI_REFRESH': self.refresh_wifi,
             }
-        command_map[order[0]](*order[1:])
+        print_d(True, 'running order: ', order[0])
+        return command_map[order[0]](*order[1:])
 
     def init_manager(self):
         manager = None
@@ -618,4 +758,4 @@ class DeviceConfigurator:
 
 if __name__ == '__main__':
     configurator = DeviceConfigurator()
-    configurator.select_device()
+    configurator.run()
