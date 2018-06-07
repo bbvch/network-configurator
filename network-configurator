@@ -170,10 +170,11 @@ class MenuManager:
             return new_address
 
     def read_string(self, text, empty_string=True):
-        input = raw_input(text)
+        input = raw_input(text).decode(sys.stdin.encoding)
+
 
         while empty_string and input == '':
-            input = raw_input(text)
+            input = raw_input(text).decode(sys.stdin.encoding)
 
         return input
 
@@ -261,7 +262,7 @@ class MenuManager:
         os.system('clear')
         print line
         print headline
-        print "SSID: " + device_.Name + " State: " + device_.get_current_state()
+        print ("SSID: " + device_.Name + " State: " + device_.get_current_state()).encode('utf-8')
         print line
         print "(0) Method:\t\t" + device_.current.method + "\t\t" + device_.new.method
         print "(1) IPv4:\t\t" + device_.current.ip + "\t\t" + device_.new.ip
