@@ -480,7 +480,7 @@ class Device:
         os.popen(strg_ip)
 
         if not self.new.dns == "":
-            print "Applying DNS configuration...", iniself.new.dns
+            print "Applying DNS configuration...", self.new.dns
             strg_dns = "connmanctl config " + self.device_name + " --nameservers " + self.new.dns
             os.popen(strg_dns)
 
@@ -556,6 +556,7 @@ class Device:
                 if self.new.passphrase == self.current.passphrase:
                     print_d(False, 'in simple wifi_service.connect()')
                     wifi_service.connect()
+                    self.tech.set_property('AutoConnect', True)
                     self.refresh_current_configuration()
                 else:
                     print_d(False, 'in different passphrases')
